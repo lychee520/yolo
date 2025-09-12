@@ -213,6 +213,10 @@ class BaseValidator:
                     *tuple(self.speed.values())
                 )
             )
+            # -----------------------------------FPS打印-----------------------------------#
+            speedvalues_list = [round(x, 1) for x in list(self.speed.values())]
+            print(f'FPS: {round(1000 / sum(speedvalues_list), 2)} 帧/s')
+            # -----------------------------------FPS打印-----------------------------------#
             if self.args.save_json and self.jdict:
                 with open(str(self.save_dir / "predictions.json"), "w") as f:
                     LOGGER.info(f"Saving {f.name}...")

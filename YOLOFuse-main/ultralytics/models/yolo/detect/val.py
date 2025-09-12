@@ -192,8 +192,11 @@ class DetectionValidator(BaseValidator):
 
     def print_results(self):
         """Prints training/validation set metrics per class."""
-        pf = "%22s" + "%11i" * 2 + "%11.3g" * len(self.metrics.keys)  # print format
+        pf = "%22s" + "%11i" * 2 + "%11.4g" * len(self.metrics.keys)  # print format
         LOGGER.info(pf % ("all", self.seen, self.nt_per_class.sum(), *self.metrics.mean_results()))
+        # LOGGER.info(pf % ('all', self.seen, self.nt_per_class.sum(), self.metrics.mean_results()[0] * 100,
+        #                   self.metrics.mean_results()[1] * 100, self.metrics.mean_results()[1] * 100,
+        #                   self.metrics.mean_results()[3] * 100))
         if self.nt_per_class.sum() == 0:
             LOGGER.warning(f"WARNING ⚠️ no labels found in {self.args.task} set, can not compute metrics without labels")
 
@@ -203,6 +206,9 @@ class DetectionValidator(BaseValidator):
                 LOGGER.info(
                     pf % (self.names[c], self.nt_per_image[c], self.nt_per_class[c], *self.metrics.class_result(i))
                 )
+                # LOGGER.info(pf % (self.names[c], self.seen, self.nt_per_class[c], self.metrics.class_result(i)[0] * 100,
+                #                   self.metrics.class_result(i)[1] * 100, self.metrics.class_result(i)[2] * 100,
+                #                   self.metrics.class_result(i)[3] * 100))
 
         if self.args.plots:
             for normalize in True, False:
