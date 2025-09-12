@@ -1,7 +1,7 @@
 from ultralytics import YOLO
 
 if __name__ == "__main__":
-    model = YOLO("ultralytics/cfg/models/fuse/Easy-level-Feature-Fusion-pose.yaml")
+    model = YOLO("ultralytics/cfg/models/fuse/Early-level-Feature-Fusion-pose.yaml")
     model.train(
         data="ultralytics/cfg/datasets/coco8-pose.yaml",
         ch=6, # 多模态时设置为 6 ，单模态时设置为 3

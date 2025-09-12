@@ -57,22 +57,34 @@ class PoseTrainer(yolo.detect.DetectionTrainer):
 
     def plot_training_samples(self, batch, ni):
         """Plot a batch of training samples with annotated class labels, bounding boxes, and keypoints."""
-        images = batch["img"]
-        kpts = batch["keypoints"]
-        cls = batch["cls"].squeeze(-1)
-        bboxes = batch["bboxes"]
-        paths = batch["im_file"]
-        batch_idx = batch["batch_idx"]
+        # images = batch["img"]
+        # images = batch["img"][:, :3],  # RGB
+        # kpts = batch["keypoints"]
+        # cls = batch["cls"].squeeze(-1)
+        # bboxes = batch["bboxes"]
+        # paths = batch["im_file"]
+        # batch_idx = batch["batch_idx"]
         plot_images(
-            images,
-            batch_idx,
-            cls,
-            bboxes,
-            kpts=kpts,
-            paths=paths,
+            images = batch["img"][:, :3],  # RGB
+            batch_idx = batch["batch_idx"],
+            cls = batch["cls"].squeeze(-1),
+            bboxes = batch["bboxes"],
+            kpts = batch["keypoints"],
+            paths = batch["im_file"],
             fname=self.save_dir / f"train_batch{ni}.jpg",
             on_plot=self.on_plot,
         )
+
+        if batch["img"].size(1) > 3:  # IR
+            plot_images(
+                images=batch["img"][:, 3:],
+                batch_idx=batch["batch_idx"],
+                cls=batch["cls"].squeeze(-1),
+                bboxes=batch["bboxes"],
+                paths=batch["im_file"],
+                fname=self.save_dir / f"train_batch_ir_{ni}.jpg",
+                on_plot=self.on_plot,
+            )
 
     def plot_metrics(self):
         """Plots training/val metrics."""
