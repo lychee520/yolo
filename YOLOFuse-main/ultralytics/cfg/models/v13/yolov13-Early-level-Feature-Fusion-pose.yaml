@@ -1,7 +1,7 @@
 # Parameters
 ch: 6
-nc: 1 # number of classes
-kpt_shape: [2, 6] # number of keypoints, number of dims (2 for x,y or 3 for x,y,visible)
+nc: 2 # number of classes
+kpt_shape: [2, 3] # number of keypoints, number of dims (2 for x,y or 3 for x,y,visible)
 scales: # model compound scaling constants, i.e. 'model=yolov13n.yaml' will call yolov8.yaml with scale 'n'
   # [depth, width, max_channels]
   n: [ 0.50, 0.25, 1024 ]   # Nano

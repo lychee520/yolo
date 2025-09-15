@@ -1,7 +1,7 @@
 # Parameters
-nc: 1 # number of classes
+nc: 2 # number of classes
 ch: 6
-kpt_shape: [17, 6] # number of keypoints, number of dims (2 for x,y or 3 for x,y,visible)
+kpt_shape: [2, 3] # number of keypoints, number of dims (2 for x,y or 3 for x,y,visible)
 scales: # model compound scaling constants
   # [depth, width, max_channels]
   n: [0.50, 0.25, 1024]
