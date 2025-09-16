@@ -3,7 +3,7 @@
 # Example usage: yolo train data=LLVIP.yaml
 
 # Train/val/test sets as dir: path/to/imgs
-path: ../datasets/lll-pose  # dataset root dir
+path: ../datasets/lll-pose-ir  # dataset root dir
 train: images/train  # train visible images (relative to 'path')
 #train2: imagesIR/train  # train infrared images (relative to 'path')
 val: images/val  # val visible images (relative to 'path')
