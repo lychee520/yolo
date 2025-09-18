@@ -153,7 +153,7 @@ def mask_iou(mask1, mask2, eps=1e-7):
     return intersection / (union + eps)
 
 
-def kpt_iou(kpt1, kpt2, area, sigma, kpt_idx=None, eps=1e-7):
+def kpt_iou(kpt1, kpt2, area, sigma, eps=1e-7):
     """
     Calculate Object Keypoint Similarity (OKS).
 
@@ -162,23 +162,11 @@ def kpt_iou(kpt1, kpt2, area, sigma, kpt_idx=None, eps=1e-7):
         kpt2 (torch.Tensor): A tensor of shape (M, 17, 3) representing predicted keypoints.
         area (torch.Tensor): A tensor of shape (N,) representing areas from ground truth.
         sigma (list): A list containing 17 values representing keypoint scales.
-        kpt_idx (int, optional): If specified, calculates OKS for only this keypoint index. Defaults to None.
         eps (float, optional): A small value to avoid division by zero. Defaults to 1e-7.
 
     Returns:
         (torch.Tensor): A tensor of shape (N, M) representing keypoint similarities.
     """
-    ### --- 修改开始 --- ###
-    # 如果指定了kpt_idx，则只处理该索引的关键点
-    if kpt_idx is not None:
-        kpt1 = kpt1[:, kpt_idx : kpt_idx + 1, :]
-        kpt2 = kpt2[:, kpt_idx : kpt_idx + 1, :]
-        # 确保sigma是numpy array以便切片
-        if isinstance(sigma, (list, tuple)):
-            sigma = np.array(sigma)
-        sigma = sigma[kpt_idx : kpt_idx + 1]
-    ### --- 修改结束 --- ###
-
     d = (kpt1[:, None, :, 0] - kpt2[..., 0]).pow(2) + (kpt1[:, None, :, 1] - kpt2[..., 1]).pow(2)  # (N, M, 17)
     sigma = torch.tensor(sigma, device=kpt1.device, dtype=kpt1.dtype)  # (17, )
     kpt_mask = kpt1[..., 2] != 0  # (N, 17)
