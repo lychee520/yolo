@@ -10,6 +10,7 @@ from ultralytics.utils.torch_utils import fuse_conv_and_bn
 from .conv import Conv, DSConv, DWConv, GhostConv, LightConv, RepConv, autopad
 from .transformer import TransformerBlock
 from .mona import Mona
+from .overlock import RepConvBlock
 
 __all__ = (
     "DFL",
@@ -60,7 +61,8 @@ __all__ = (
     "FullPAD_Tunnel",
     "DSC3k2",
     "A2C2f_Mona",
-    "C2PSA_Mona"
+    "C2PSA_Mona",
+    "C3k2_RCB"
 )
 
 
@@ -2069,3 +2071,18 @@ class C2PSA_Mona(C2PSA):
 
 
 ######################################## CVPR2025-Mona end ########################################
+
+######################################## CVPR2025 OverLock start ########################################
+
+class C3k_RCB(C3k):
+    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5, k=3):
+        super().__init__(c1, c2, n, shortcut, g, e, k)
+        c_ = int(c2 * e)  # hidden channels
+        self.m = nn.Sequential(*(RepConvBlock(c_) for _ in range(n)))
+
+class C3k2_RCB(C3k2):
+    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
+        super().__init__(c1, c2, n, c3k, e, g, shortcut)
+        self.m = nn.ModuleList(C3k_RCB(self.c, self.c, n, shortcut, g) if c3k else RepConvBlock(self.c) for _ in range(n))
+
+######################################## CVPR2025 OverLock end ########################################

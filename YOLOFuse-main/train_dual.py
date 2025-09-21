@@ -3,7 +3,7 @@ from ultralytics import YOLO
 
 #############多模态训练脚本#############
 if __name__ == "__main__":
-    model = YOLO("ultralytics/cfg/models/v11/yolo11-elff-Nona-pose.yaml")
+    model = YOLO("ultralytics/cfg/models/v11/yolo11-elff-RCB-pose.yaml")
     model.train(
         data="ultralytics/cfg/datasets/lll-pose.yaml",
         ch=6, # 多模态时设置为 6 ，单模态时设置为 3

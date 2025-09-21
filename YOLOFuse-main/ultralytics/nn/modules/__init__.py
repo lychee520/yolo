@@ -66,7 +66,8 @@ from .block import (
     FullPAD_Tunnel,
     DSC3k2,
     A2C2f_Mona,
-    C2PSA_Mona
+    C2PSA_Mona,
+    C3k2_RCB
 )
 from .conv import (
     CBAM,
@@ -181,5 +182,6 @@ __all__ = (
     "DSC3k2",
     "DSConv",
     "A2C2f_Mona",
-    "C2PSA_Mona"
+    "C2PSA_Mona",
+    "C3k2_RCB"
 )
