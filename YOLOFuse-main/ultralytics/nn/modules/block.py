@@ -10,6 +10,8 @@ from ultralytics.utils.torch_utils import fuse_conv_and_bn
 from .conv import Conv, DSConv, DWConv, GhostConv, LightConv, RepConv, autopad
 from .transformer import TransformerBlock
 from .mona import Mona
+from typing import Optional, Callable, Union, List
+from torch import Tensor
 from .overlock import RepConvBlock
 
 __all__ = (
@@ -62,7 +64,8 @@ __all__ = (
     "DSC3k2",
     "A2C2f_Mona",
     "C2PSA_Mona",
-    "C3k2_RCB"
+    "C3k2_RCB",
+    "C3k2_LFEM"
 )
 
 
@@ -2086,3 +2089,290 @@ class C3k2_RCB(C3k2):
         self.m = nn.ModuleList(C3k_RCB(self.c, self.c, n, shortcut, g) if c3k else RepConvBlock(self.c) for _ in range(n))
 
 ######################################## CVPR2025 OverLock end ########################################
+
+######################################## LEGNet start ########################################
+
+class Conv_Extra(nn.Module):
+    def __init__(self, channel):
+        super(Conv_Extra, self).__init__()
+        self.block = nn.Sequential(Conv(channel, 64, 1),
+                                   Conv(64, 64, 3),
+                                   Conv(64, channel, 1, act=False))
+
+    def forward(self, x):
+        out = self.block(x)
+        return out
+
+
+class Scharr(nn.Module):
+    def __init__(self, channel):
+        super(Scharr, self).__init__()
+        # 定义Scharr滤波器
+        scharr_x = torch.tensor([[-3., 0., 3.], [-10., 0., 10.], [-3., 0., 3.]], dtype=torch.float32).unsqueeze(
+            0).unsqueeze(0)
+        scharr_y = torch.tensor([[-3., -10., -3.], [0., 0., 0.], [3., 10., 3.]], dtype=torch.float32).unsqueeze(
+            0).unsqueeze(0)
+        self.conv_x = nn.Conv2d(channel, channel, kernel_size=3, padding=1, groups=channel, bias=False)
+        self.conv_y = nn.Conv2d(channel, channel, kernel_size=3, padding=1, groups=channel, bias=False)
+        # 将Sobel滤波器分配给卷积层
+        self.conv_x.weight.data = scharr_x.repeat(channel, 1, 1, 1)
+        self.conv_y.weight.data = scharr_y.repeat(channel, 1, 1, 1)
+        self.norm = nn.BatchNorm2d(channel)
+        self.conv_extra = Conv_Extra(channel)
+
+    def forward(self, x):
+        # show_feature(x)
+        # 应用卷积操作
+        edges_x = self.conv_x(x)
+        edges_y = self.conv_y(x)
+        # 计算边缘和高斯分布强度（可以选择不同的方式进行融合，这里使用平方和开根号）
+        scharr_edge = torch.sqrt(edges_x ** 2 + edges_y ** 2)
+        scharr_edge = self.act(self.norm(scharr_edge))
+        out = self.conv_extra(x + scharr_edge)
+        # show_feature(out)
+
+        return out
+
+
+class Gaussian(nn.Module):
+    def __init__(self, dim, size, sigma, feature_extra=True):
+        super().__init__()
+        self.feature_extra = feature_extra
+        gaussian = self.gaussian_kernel(size, sigma)
+        gaussian = nn.Parameter(data=gaussian, requires_grad=False).clone()
+        self.gaussian = nn.Conv2d(dim, dim, kernel_size=size, stride=1, padding=int(size // 2), groups=dim, bias=False)
+        self.gaussian.weight.data = gaussian.repeat(dim, 1, 1, 1)
+        self.norm = nn.BatchNorm2d(dim)
+        self.act = nn.SiLU()
+        if feature_extra == True:
+            self.conv_extra = Conv_Extra(dim)
+
+    def forward(self, x):
+        edges_o = self.gaussian(x)
+        gaussian = self.act(self.norm(edges_o))
+        if self.feature_extra == True:
+            out = self.conv_extra(x + gaussian)
+        else:
+            out = gaussian
+        return out
+
+    def gaussian_kernel(self, size: int, sigma: float):
+        kernel = torch.FloatTensor([
+            [(1 / (2 * math.pi * sigma ** 2)) * math.exp(-(x ** 2 + y ** 2) / (2 * sigma ** 2))
+             for x in range(-size // 2 + 1, size // 2 + 1)]
+            for y in range(-size // 2 + 1, size // 2 + 1)
+        ]).unsqueeze(0).unsqueeze(0)
+        return kernel / kernel.sum()
+
+
+class LFEA(nn.Module):
+    def __init__(self, channel):
+        super(LFEA, self).__init__()
+        self.channel = channel
+        t = int(abs((math.log(channel, 2) + 1) / 2))
+        k = t if t % 2 else t + 1
+        self.conv2d = self.block = Conv(channel, channel, 3)
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.conv1d = nn.Conv1d(1, 1, kernel_size=k, padding=(k - 1) // 2, bias=False)
+        self.sigmoid = nn.Sigmoid()
+        self.norm = nn.BatchNorm2d(channel)
+
+    def forward(self, c, att):
+        att = c * att + c
+        att = self.conv2d(att)
+        wei = self.avg_pool(att)
+        wei = self.conv1d(wei.squeeze(-1).transpose(-1, -2)).transpose(-1, -2).unsqueeze(-1)
+        wei = self.sigmoid(wei)
+        x = self.norm(c + att * wei)
+
+        return x
+
+
+def drop_path(x, drop_prob: float = 0., training: bool = False):
+    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
+    This is the same as the DropConnect impl I created for EfficientNet, etc networks, however,
+    the original name is misleading as 'Drop Connect' is a different form of dropout in a separate paper...
+    See discussion: https://github.com/tensorflow/tpu/issues/494#issuecomment-532968956 ... I've opted for
+    changing the layer and argument names to 'drop path' rather than mix DropConnect as a layer name and use
+    'survival rate' as the argument.
+    """
+    if drop_prob == 0. or not training:
+        return x
+    keep_prob = 1 - drop_prob
+    shape = (x.shape[0],) + (1,) * (x.ndim - 1)  # work with diff dim tensors, not just 2D ConvNets
+    random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+    random_tensor.floor_()  # binarize
+    output = x.div(keep_prob) * random_tensor
+    return output
+
+
+class Mlp(nn.Module):
+    def __init__(self, in_features, hidden_features=None, out_features=None, drop=0.):
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.fc1 = Conv(in_features, hidden_features, act=False)
+        self.dwconv = nn.Conv2d(hidden_features, hidden_features, 3, 1, 1, bias=True, groups=hidden_features)
+        self.act = nn.ReLU6()
+        self.fc2 = Conv(hidden_features, out_features, act=False)
+        self.drop = nn.Dropout(drop)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.dwconv(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
+        return x
+
+class DropPath(nn.Module):
+    """Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks).
+    """
+
+    def __init__(self, drop_prob=None):
+        super(DropPath, self).__init__()
+        self.drop_prob = drop_prob
+
+    def forward(self, x):
+        return drop_path(x, self.drop_prob, self.training)
+
+class LFE_Module(nn.Module):
+    def __init__(self,
+                 dim,
+                 stage=1,
+                 mlp_ratio=2,
+                 drop_path=0.1,
+                 ):
+        super().__init__()
+        self.stage = stage
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        mlp_layer: List[nn.Module] = [
+            Conv(dim, mlp_hidden_dim, 1),
+            nn.Conv2d(mlp_hidden_dim, dim, 1, bias=False)]
+
+        self.mlp = nn.Sequential(*mlp_layer)
+        self.LFEA = LFEA(dim)
+
+        if stage == 0:
+            self.Scharr_edge = Scharr(dim)
+        else:
+            self.gaussian = Gaussian(dim, 5, 1.0)
+        self.norm = nn.BatchNorm2d(dim)
+
+    def forward(self, x: Tensor) -> Tensor:
+        # show_feature(x)
+        if self.stage == 0:
+            att = self.Scharr_edge(x)
+        else:
+            att = self.gaussian(x)
+        x_att = self.LFEA(x, att)
+        x = x + self.norm(self.drop_path(self.mlp(x_att)))
+        return x
+
+
+class C3k_LFEM(C3k):
+    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5, k=3):
+        super().__init__(c1, c2, n, shortcut, g, e, k)
+        c_ = int(c2 * e)  # hidden channels
+        self.m = nn.Sequential(*(LFE_Module(c_) for _ in range(n)))
+
+
+class C3k2_LFEM(C3k2):
+    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
+        super().__init__(c1, c2, n, c3k, e, g, shortcut)
+        self.m = nn.ModuleList(
+            C3k_LFEM(self.c, self.c, n, shortcut, g) if c3k else LFE_Module(self.c) for _ in range(n))
+
+
+class DRFD_LoG(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.dim = dim
+        self.outdim = dim * 2
+        self.conv = nn.Conv2d(dim, dim * 2, kernel_size=3, stride=1, padding=1, groups=dim)
+        self.conv_c = nn.Conv2d(dim * 2, dim * 2, kernel_size=3, stride=2, padding=1, groups=dim * 2)
+        self.act_c = nn.SiLU()
+        self.norm_c = nn.BatchNorm2d(dim * 2)
+        self.max_m = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.norm_m = nn.BatchNorm2d(dim * 2)
+        self.fusion = nn.Conv2d(dim * 4, self.outdim, kernel_size=1, stride=1)
+        # gaussian
+        self.gaussian = Gaussian(self.outdim, 5, 0.5, feature_extra=False)
+        self.norm_g = nn.BatchNorm2d(self.outdim)
+
+    def forward(self, x):  # x = [B, C, H, W]
+
+        x = self.conv(x)  # x = [B, 2C, H, W]
+        gaussian = self.gaussian(x)
+        x = self.norm_g(x + gaussian)
+        max = self.norm_m(self.max_m(x))  # m = [B, 2C, H/2, W/2]
+        conv = self.norm_c(self.act_c(self.conv_c(x)))  # c = [B, 2C, H/2, W/2]
+        x = torch.cat([conv, max], dim=1)  # x = [B, 2C+2C, H/2, W/2]  -->  [B, 4C, H/2, W/2]
+        x = self.fusion(x)  # x = [B, 4C, H/2, W/2]     -->  [B, 2C, H/2, W/2]
+
+        return x
+
+
+class LoGFilter(nn.Module):
+    def __init__(self, in_c, out_c, kernel_size, sigma):
+        super(LoGFilter, self).__init__()
+        # 7x7 convolution with stride 1 for feature reinforcement, Channels from 3 to 1/4C.
+        self.conv_init = nn.Conv2d(in_c, out_c, kernel_size=7, stride=1, padding=3)
+        """创建高斯-拉普拉斯核"""
+        # 初始化二维坐标
+        ax = torch.arange(-(kernel_size // 2), (kernel_size // 2) + 1, dtype=torch.float32)
+        xx, yy = torch.meshgrid(ax, ax)
+        # 计算高斯-拉普拉斯核
+        kernel = (xx ** 2 + yy ** 2 - 2 * sigma ** 2) / (2 * math.pi * sigma ** 4) * torch.exp(
+            -(xx ** 2 + yy ** 2) / (2 * sigma ** 2))
+        # 归一化
+        kernel = kernel - kernel.mean()
+        kernel = kernel / kernel.sum()
+        log_kernel = kernel.unsqueeze(0).unsqueeze(0)  # 添加 batch 和 channel 维度
+        self.LoG = nn.Conv2d(out_c, out_c, kernel_size=kernel_size, stride=1, padding=int(kernel_size // 2),
+                             groups=out_c, bias=False)
+        self.LoG.weight.data = log_kernel.repeat(out_c, 1, 1, 1)
+        self.act = nn.SiLU()
+        self.norm1 = nn.BatchNorm2d(out_c)
+        self.norm2 = nn.BatchNorm2d(out_c)
+
+    def forward(self, x):
+        # 7x7 convolution with stride 1 for feature reinforcement, Channels from 3 to 1/4C.
+        x = self.conv_init(x)  # x = [B, C/4, H, W]
+        LoG = self.LoG(x)
+        LoG_edge = self.act(self.norm1(LoG))
+        x = self.norm2(x + LoG_edge)
+        return x
+
+
+class LoGStem(nn.Module):
+
+    def __init__(self, in_chans, stem_dim):
+        super().__init__()
+        out_c14 = int(stem_dim / 4)  # stem_dim / 2
+        out_c12 = int(stem_dim / 2)  # stem_dim / 2
+        # original size to 2x downsampling layer
+        self.Conv_D = nn.Sequential(
+            nn.Conv2d(out_c14, out_c12, kernel_size=3, stride=1, padding=1, groups=out_c14),
+            Conv(out_c12, out_c12, 3, 2, g=out_c12)
+        )
+        # 定义LoG滤波器
+        self.LoG = LoGFilter(in_chans, out_c14, 7, 1.0)
+        # gaussian
+        self.gaussian = Gaussian(out_c12, 9, 0.5)
+        self.norm = nn.BatchNorm2d(out_c12)
+        self.drfd = DRFD_LoG(out_c12)
+
+    def forward(self, x):
+        x = self.LoG(x)
+        # original size to 2x downsampling layer
+        x = self.Conv_D(x)
+        x = self.norm(x + self.gaussian(x))
+        x = self.drfd(x)
+
+        return x  # x = [B, C, H/4, W/4]
+
+######################################## LEGNet end ########################################
