@@ -9,6 +9,7 @@ import math
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 from .conv import Conv, DSConv, DWConv, GhostConv, LightConv, RepConv, autopad
 from .transformer import TransformerBlock
+from .mona import Mona
 
 __all__ = (
     "DFL",
@@ -57,7 +58,9 @@ __all__ = (
     "HyperACE",
     "DownsampleConv",
     "FullPAD_Tunnel",
-    "DSC3k2"
+    "DSC3k2",
+    "A2C2f_Mona",
+    "C2PSA_Mona"
 )
 
 
@@ -2013,3 +2016,56 @@ class FullPAD_Tunnel(nn.Module):
     def forward(self, x):
         out = x[0] + self.gate * x[1]
         return out
+
+
+######################################## CVPR2025-Mona start ########################################
+
+class ABlock_Mona(ABlock):
+    def __init__(self, dim, num_heads, mlp_ratio=1.2, area=1):
+        super().__init__(dim, num_heads, mlp_ratio, area)
+
+        self.mona1 = Mona(dim)
+        self.mona2 = Mona(dim)
+
+    def forward(self, x):
+        """Forward pass through ABlock, applying area-attention and feed-forward layers to the input tensor."""
+        x = self.mona1(x + self.attn(x))
+        return self.mona2(x + self.mlp(x))
+
+
+class A2C2f_Mona(A2C2f):
+    def __init__(self, c1, c2, n=1, a2=True, area=1, residual=False, mlp_ratio=2, e=0.5, g=1, shortcut=True):
+        super().__init__(c1, c2, n, a2, area, residual, mlp_ratio, e, g, shortcut)
+        c_ = int(c2 * e)  # hidden channels
+        assert c_ % 32 == 0, "Dimension of ABlock be a multiple of 32."
+
+        self.m = nn.ModuleList(
+            nn.Sequential(*(ABlock_Mona(c_, c_ // 32, mlp_ratio, area) for _ in range(2)))
+            if a2
+            else C3k(c_, c_, 2, shortcut, g)
+            for _ in range(n)
+        )
+
+class PSABlock_Mona(PSABlock):
+    def __init__(self, c, attn_ratio=0.5, num_heads=4, shortcut=True) -> None:
+        super().__init__(c, attn_ratio, num_heads, shortcut)
+
+        self.mona1 = Mona(c)
+        self.mona2 = Mona(c)
+
+    def forward(self, x):
+        x = x + self.attn(x) if self.add else self.attn(x)
+        x = self.mona1(x)
+        x = x + self.ffn(x) if self.add else self.ffn(x)
+        x = self.mona2(x)
+        return x
+
+
+class C2PSA_Mona(C2PSA):
+    def __init__(self, c1, c2, n=1, e=0.5):
+        super().__init__(c1, c2, n, e)
+
+        self.m = nn.Sequential(*(PSABlock_Mona(self.c, attn_ratio=0.5, num_heads=self.c // 64) for _ in range(n)))
+
+
+######################################## CVPR2025-Mona end ########################################

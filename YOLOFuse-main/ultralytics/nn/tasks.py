@@ -72,7 +72,9 @@ from ultralytics.nn.modules import (
     HyperACE,
     DownsampleConv,
     FullPAD_Tunnel,
-    DSC3k2
+    DSC3k2,
+    A2C2f_Mona,
+    C2PSA_Mona
 )
 from ultralytics.nn.modules.layers.CGAFusion import CGAFusion
 from ultralytics.nn.modules.layers.BiFocus import C2f_BiFocus
@@ -1015,7 +1017,9 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             C2fCIB,
             A2C2f,
             DSC3k2,
-            DSConv
+            DSConv,
+            A2C2f_Mona,
+            C2PSA_Mona
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1035,7 +1039,9 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             C2fCIB,
             C2PSA,
             A2C2f,
-            DSC3k2
+            DSC3k2,
+            A2C2f_Mona,
+            C2PSA_Mona
         }
     )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
@@ -1067,7 +1073,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
                 legacy = False
                 if scale in "mlx":
                     args[3] = True
-            if m is A2C2f: 
+            if m is {A2C2f, A2C2f_Mona}:
                 legacy = False
                 if scale in "lx":  # for L/X sizes
                     args.append(True)
