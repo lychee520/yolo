@@ -1,0 +1,30 @@
+# Ultralytics YOLO , AGPL-3.0 license
+# LLVIP dataset
+# Example usage: yolo train data=LLVIP.yaml
+
+# Train/val/test sets as dir: path/to/imgs
+path: ../datasets/lll-frame  # dataset root dir
+train: images/train  # train visible images (relative to 'path')
+train2: imagesIR/train  # train infrared images (relative to 'path')
+val: images/val  # val visible images (relative to 'path')
+val2: imagesIR/val  # val visible images (relative to 'path')
+test:   # test images (optional)
+
+# Train/val/test sets as dir: path/to/imgs
+#path: E:/data/test  # dataset root dir
+#train: images/vis_train  # train visible images (relative to 'path')
+#
+#val: images/vis_val  # val visible images (relative to 'path')
+#
+#test:   # test images (optional)
+
+#image_weights: True
+#nc: 1
+# Keypoints
+ch : 6
+kpt_shape: [2, 3] # number of keypoints, number of dims (2 for x,y or 3 for x,y,visible)
+
+# Classes
+names:
+  0: OWT
+  1: WPS
