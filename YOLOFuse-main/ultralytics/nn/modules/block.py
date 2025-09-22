@@ -13,6 +13,8 @@ from .mona import Mona
 from typing import Optional, Callable, Union, List
 from torch import Tensor
 from .overlock import RepConvBlock
+from .metaformer import *
+from einops import rearrange, reduce
 
 __all__ = (
     "DFL",
@@ -65,7 +67,8 @@ __all__ = (
     "A2C2f_Mona",
     "C2PSA_Mona",
     "C3k2_RCB",
-    "C3k2_LFEM"
+    "C3k2_LFEM",
+    "C3k2_TSSA"
 )
 
 
@@ -739,7 +742,7 @@ class C3f(nn.Module):
 
 
 class C3k2(C2f):
-    """Faster Implementation of CSP Bottleneck with 2 convolutions."""
+    """C2f属于CSP 结构的核心思想：将输入的特征图分成两部分，一部分直接“走捷径”向后传递，另一部分经过一系列复杂的处理（比如瓶颈层），最后再将两部分合并。这样做的好处是既保留了丰富的梯度信息，又减少了计算量。C3k2 是一个基于 C2f 框架的、可配置的 CSP 模块。它提供了一个开关 (c3k 参数)，允许设计者在标准的瓶颈层 (Bottleneck) 和一种名为 C3k 的特殊瓶颈层之间轻松切换，以进行模型结构实验。"""
 
     def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
         """Initializes the C3k2 module, a faster CSP Bottleneck with 2 convolutions and optional C3k blocks."""
@@ -1019,10 +1022,7 @@ class PSA(nn.Module):
 
 class C2PSA(nn.Module):
     """
-    C2PSA module with attention mechanism for enhanced feature extraction and processing.
-
-    This module implements a convolutional block with attention mechanisms to enhance feature extraction and processing
-    capabilities. It includes a series of PSABlock modules for self-attention and feed-forward operations.
+    C2PSA 是一个将 PSA（Polarized Self-Attention，极化自注意力）模块嵌入到 C2f（一种 CSP 跨阶段局部连接）框架中的高效特征提取块
 
     Attributes:
         c (int): Number of hidden channels.
@@ -1047,13 +1047,19 @@ class C2PSA(nn.Module):
         super().__init__()
         assert c1 == c2
         self.c = int(c1 * e)
-        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
-        self.cv2 = Conv(2 * self.c, c1, 1)
+        self.cv1 = Conv(c1, 2 * self.c, 1, 1) # 初始1x1卷积，用于分流准备
+        self.cv2 = Conv(2 * self.c, c1, 1)# 最终1x1卷积，用于融合
 
-        self.m = nn.Sequential(*(PSABlock(self.c, attn_ratio=0.5, num_heads=self.c // 64) for _ in range(n)))
+        self.m = nn.Sequential(*(PSABlock(self.c, attn_ratio=0.5, num_heads=self.c // 64) for _ in range(n)))#PSABlock: 这是一种自注意力模块。它的作用是分析特征图，并自动学习到哪些区域（空间维度）和哪些通道（特征维度）更重要，然后对这些重要部分赋予更高的权重。
 
     def forward(self, x):
-        """Processes the input tensor 'x' through a series of PSA blocks and returns the transformed tensor."""
+        """  1. 分流：通过 cv1，然后将特征图在通道维度上劈成两半 a 和 b
+    a, b = self.cv1(x).split((self.c, self.c), dim=1)
+
+    # 2. 处理：只有 b 这一半会通过核心的 PSABlock 注意力模块
+    b = self.m(b)
+
+    # 3. 汇合与融合：将“直通车”的 a 和处理后的 b 拼接起来，再通过 cv2 融合"""
         a, b = self.cv1(x).split((self.c, self.c), dim=1)
         b = self.m(b)
         return self.cv2(torch.cat((a, b), 1))
@@ -2376,3 +2382,63 @@ class LoGStem(nn.Module):
         return x  # x = [B, C, H/4, W/4]
 
 ######################################## LEGNet end ########################################
+
+######################################## ICLR2025 Token Statistics Transformer start ########################################
+
+class AttentionTSSA_Meta(nn.Module):
+    # https://github.com/RobinWu218/ToST
+    def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0., **kwargs):
+        super().__init__()
+
+        self.heads = num_heads
+
+        self.attend = nn.Softmax(dim=1)
+        self.attn_drop = nn.Dropout(attn_drop)
+
+        self.qkv = nn.Linear(dim, dim, bias=qkv_bias)
+
+        self.temp = nn.Parameter(torch.ones(num_heads, 1, 1))
+
+        self.to_out = nn.Sequential(
+            nn.Linear(dim, dim),
+            nn.Dropout(proj_drop)
+        )
+
+    def forward(self, x):
+        w = rearrange(self.qkv(x), 'b x y (h d) -> b h x y d', h=self.heads)
+
+        # b, h, N, d = w.shape
+
+        w_normed = torch.nn.functional.normalize(w, dim=-2)
+        w_sq = w_normed ** 2
+
+        # Pi from Eq. 10 in the paper
+        Pi = self.attend(torch.sum(w_sq, dim=-1) * self.temp)  # b * h * n
+
+        dots = torch.matmul((Pi / (Pi.sum(dim=-1, keepdim=True) + 1e-8)).unsqueeze(-2), w ** 2)
+        attn = 1. / (1 + dots)
+        attn = self.attn_drop(attn)
+
+        out = - torch.mul(w.mul(Pi.unsqueeze(-1)), attn)
+
+        out = rearrange(out, 'b h x y d -> b x y (h d)')
+        return self.to_out(out)
+
+
+class C3k_TSSA(C3k):
+    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5, k=3):
+        super().__init__(c1, c2, n, shortcut, g, e, k)
+        c_ = int(c2 * e)  # hidden channels
+        self.m = nn.Sequential(*(MetaFormerBlock(
+            dim=c_, token_mixer=AttentionTSSA_Meta,
+        ) for _ in range(n)))
+
+
+class C3k2_TSSA(C3k2):
+    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
+        super().__init__(c1, c2, n, c3k, e, g, shortcut)
+        self.m = nn.ModuleList(C3k_TSSA(self.c, self.c, n, shortcut, g) if c3k else MetaFormerBlock(
+            dim=self.c, token_mixer=AttentionTSSA_Meta,
+        ) for _ in range(n))
+
+######################################## ICLR2025 Token Statistics Transformer end ########################################

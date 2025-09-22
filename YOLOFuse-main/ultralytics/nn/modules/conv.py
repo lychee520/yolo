@@ -27,7 +27,7 @@ __all__ = (
 
 
 def autopad(k, p=None, d=1):  # kernel, padding, dilation
-    """Pad to 'same' shape outputs."""
+    """same" 填充 确保输出特征图的尺寸（高和宽）与输入特征图的尺寸相同"""
     if d > 1:
         k = d * (k - 1) + 1 if isinstance(k, int) else [d * (x - 1) + 1 for x in k]  # actual kernel-size
     if p is None:
@@ -36,28 +36,28 @@ def autopad(k, p=None, d=1):  # kernel, padding, dilation
 
 
 class Conv(nn.Module):
-    """Standard convolution with args(ch_in, ch_out, kernel, stride, padding, groups, dilation, activation)."""
+    """一个标准的卷积模块，其参数包括：输入通道数(ch_in)、输出通道数(ch_out)、卷积核大小(kernel)、步长(stride)、填充(padding)、分组数(groups)、空洞率(dilation)和激活函数(activation)。"""
 
-    default_act = nn.SiLU()  # default activation
+    default_act = nn.SiLU()  # 激活函数
 
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
-        """Initialize Conv layer with given arguments including activation."""
+        """SiLU (Sigmoid Linear Unit) 是一个平滑、非单调的激活函数"""
         super().__init__()
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p, d), groups=g, dilation=d, bias=False)
         self.bn = nn.BatchNorm2d(c2)
         self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
 
     def forward(self, x):
-        """Apply convolution, batch normalization and activation to input tensor."""
+        """它定义了数据的流动顺序：输入 x 先经过 卷积 (self.conv)，然后经过 批归一化 (self.bn)，最后经过 激活函数 (self.act)"""
         return self.act(self.bn(self.conv(x)))
 
     def forward_fuse(self, x):
-        """Apply convolution and activation without batch normalization."""
+        """模型训练完成后，Conv 层和 BatchNorm 层的数学运算可以在数学上合并。也就是说，可以将 BatchNorm 层的参数（均值、方差、gamma、beta）融入到 Conv 层的权重和偏置中，形成一个新的、等效的卷积层"""
         return self.act(self.conv(x))
 
 
 class Conv2(Conv):
-    """Simplified RepConv module with Conv fusing."""
+    """增加定义了一个并行的 1x1 卷积"""
 
     def __init__(self, c1, c2, k=3, s=1, p=None, g=1, d=1, act=True):
         """Initialize Conv layer with given arguments including activation."""
@@ -65,7 +65,7 @@ class Conv2(Conv):
         self.cv2 = nn.Conv2d(c1, c2, 1, s, autopad(1, p, d), groups=g, dilation=d, bias=False)  # add 1x1 conv
 
     def forward(self, x):
-        """Apply convolution, batch normalization and activation to input tensor."""
+        """将两条路径的输出结果相加 """
         return self.act(self.bn(self.conv(x) + self.cv2(x)))
 
     def forward_fuse(self, x):

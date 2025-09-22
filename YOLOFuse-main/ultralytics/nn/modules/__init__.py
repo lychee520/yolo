@@ -68,7 +68,8 @@ from .block import (
     A2C2f_Mona,
     C2PSA_Mona,
     C3k2_RCB,
-    C3k2_LFEM
+    C3k2_LFEM,
+    C3k2_TSSA
 )
 from .conv import (
     CBAM,
@@ -185,5 +186,6 @@ __all__ = (
     "A2C2f_Mona",
     "C2PSA_Mona",
     "C3k2_RCB",
-    "C3k2_LFEM"
+    "C3k2_LFEM",
+    "C3k2_TSSA"
 )

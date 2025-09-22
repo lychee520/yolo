@@ -76,7 +76,8 @@ from ultralytics.nn.modules import (
     A2C2f_Mona,
     C2PSA_Mona,
     C3k2_RCB,
-    C3k2_LFEM
+    C3k2_LFEM,
+    C3k2_TSSA
 )
 from ultralytics.nn.modules.layers.CGAFusion import CGAFusion
 from ultralytics.nn.modules.layers.BiFocus import C2f_BiFocus
@@ -1023,7 +1024,8 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             A2C2f_Mona,
             C2PSA_Mona,
             C3k2_RCB,
-            C3k2_LFEM
+            C3k2_LFEM,
+            C3k2_TSSA
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1047,7 +1049,8 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             A2C2f_Mona,
             C2PSA_Mona,
             C3k2_RCB,
-            C3k2_LFEM
+            C3k2_LFEM,
+            C3k2_TSSA
         }
     )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
@@ -1075,7 +1078,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             if m in repeat_modules:
                 args.insert(2, n)  # number of repeats
                 n = 1
-            if m is {C3k2, DSC3k2, C3k2_RCB, C3k2_LFEM}:  # for M/L/X sizes
+            if m is {C3k2, DSC3k2, C3k2_RCB, C3k2_LFEM, C3k2_TSSA}:  # for M/L/X sizes
                 legacy = False
                 if scale in "mlx":
                     args[3] = True
