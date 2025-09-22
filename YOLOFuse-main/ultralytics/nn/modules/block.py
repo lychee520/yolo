@@ -15,6 +15,7 @@ from torch import Tensor
 from .overlock import RepConvBlock
 from .metaformer import *
 from einops import rearrange, reduce
+from .attention import *
 
 __all__ = (
     "DFL",
@@ -68,7 +69,8 @@ __all__ = (
     "C2PSA_Mona",
     "C3k2_RCB",
     "C3k2_LFEM",
-    "C3k2_TSSA"
+    "C3k2_TSSA",
+    "C2TSSA"
 )
 
 
@@ -2440,5 +2442,40 @@ class C3k2_TSSA(C3k2):
         self.m = nn.ModuleList(C3k_TSSA(self.c, self.c, n, shortcut, g) if c3k else MetaFormerBlock(
             dim=self.c, token_mixer=AttentionTSSA_Meta,
         ) for _ in range(n))
+
+######################################## ICLR2025 Token Statistics Transformer end ########################################
+
+
+
+######################################## ICLR2025 Token Statistics Transformer start ########################################
+
+class TSSAlock(PSABlock):
+    def __init__(self, c, attn_ratio=0.5, num_heads=4, shortcut=True) -> None:
+        super().__init__(c, attn_ratio, num_heads, shortcut)
+
+        self.attn = AttentionTSSA(c, num_heads=num_heads)
+
+    def forward(self, x):
+        """Executes a forward pass through PSABlock, applying attention and feed-forward layers to the input tensor."""
+        BS, C, H, W = x.size()
+        x = x + self.attn(x.flatten(2).permute(0, 2, 1)).permute(0, 2, 1).view(
+            [-1, C, H, W]).contiguous() if self.add else self.attn(x.flatten(2).permute(0, 2, 1)).permute(0, 2, 1).view(
+            [-1, C, H, W]).contiguous()
+        x = x + self.ffn(x) if self.add else self.ffn(x)
+        return x
+
+
+class C2TSSA(C2PSA):
+    def __init__(self, c1, c2, n=1, e=0.5):
+        super().__init__(c1, c2, n, e)
+
+        self.m = nn.Sequential(*(TSSAlock(self.c, attn_ratio=0.5, num_heads=self.c // 64) for _ in range(n)))
+
+    def forward(self, x):
+        """Processes the input tensor 'x' through a series of PSA blocks and returns the transformed tensor."""
+        a, b = self.cv1(x).split((self.c, self.c), dim=1)
+        BS, C, H, W = b.size()
+        b = self.m(b)
+        return self.cv2(torch.cat((a, b), 1))
 
 ######################################## ICLR2025 Token Statistics Transformer end ########################################

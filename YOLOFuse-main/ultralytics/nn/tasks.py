@@ -77,7 +77,8 @@ from ultralytics.nn.modules import (
     C2PSA_Mona,
     C3k2_RCB,
     C3k2_LFEM,
-    C3k2_TSSA
+    C3k2_TSSA,
+    C2TSSA
 )
 from ultralytics.nn.modules.layers.CGAFusion import CGAFusion
 from ultralytics.nn.modules.layers.BiFocus import C2f_BiFocus
@@ -1025,7 +1026,8 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             C2PSA_Mona,
             C3k2_RCB,
             C3k2_LFEM,
-            C3k2_TSSA
+            C3k2_TSSA,
+            C2TSSA
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1050,7 +1052,8 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             C2PSA_Mona,
             C3k2_RCB,
             C3k2_LFEM,
-            C3k2_TSSA
+            C3k2_TSSA,
+            C2TSSA
         }
     )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
