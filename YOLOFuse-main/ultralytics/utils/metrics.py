@@ -8,7 +8,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-
+import numpy as np
 from ultralytics.utils import LOGGER, SimpleClass, TryExcept, plt_settings
 
 OKS_SIGMA = (
@@ -153,7 +153,7 @@ def mask_iou(mask1, mask2, eps=1e-7):
     return intersection / (union + eps)
 
 
-def kpt_iou(kpt1, kpt2, area, sigma, eps=1e-7):
+def kpt_iou(kpt1, kpt2, area, sigma, kpt_idx=None, eps=1e-7):
     """
     Calculate Object Keypoint Similarity (OKS).
 
@@ -167,6 +167,15 @@ def kpt_iou(kpt1, kpt2, area, sigma, eps=1e-7):
     Returns:
         (torch.Tensor): A tensor of shape (N, M) representing keypoint similarities.
     """
+    ### --- 确保有此修改 --- ###
+    if kpt_idx is not None:
+        kpt1 = kpt1[:, kpt_idx : kpt_idx + 1, :]
+        kpt2 = kpt2[:, kpt_idx : kpt_idx + 1, :]
+        if isinstance(sigma, (list, tuple)):
+            sigma = np.array(sigma)
+        sigma = sigma[kpt_idx : kpt_idx + 1]
+    ### --- 修改结束 --- ###
+
     d = (kpt1[:, None, :, 0] - kpt2[..., 0]).pow(2) + (kpt1[:, None, :, 1] - kpt2[..., 1]).pow(2)  # (N, M, 17)
     sigma = torch.tensor(sigma, device=kpt1.device, dtype=kpt1.dtype)  # (17, )
     kpt_mask = kpt1[..., 2] != 0  # (N, 17)
