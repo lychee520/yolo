@@ -78,7 +78,8 @@ from ultralytics.nn.modules import (
     C3k2_RCB,
     C3k2_LFEM,
     C3k2_TSSA,
-    C2TSSA
+    C2TSSA,
+    GDSAFusion
 )
 from ultralytics.nn.modules.layers.CGAFusion import CGAFusion
 from ultralytics.nn.modules.layers.BiFocus import C2f_BiFocus
@@ -1139,6 +1140,10 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             c2 = args[0]
             c1 = ch[f]
             args = [*args[1:]]
+        elif m in {GDSAFusion}:
+            c1 = [ch[x] for x in f]
+            c2 = sum(c1)
+            args = [*c1, *args]
         elif m is HyperACE:
             legacy = False
             c1 = ch[f[1]]

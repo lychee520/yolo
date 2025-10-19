@@ -102,6 +102,7 @@ from .transformer import (
     TransformerEncoderLayer,
     TransformerLayer,
 )
+from .overlock import GDSAFusion
 
 __all__ = (
     "Conv",
@@ -189,5 +190,6 @@ __all__ = (
     "C3k2_RCB",
     "C3k2_LFEM",
     "C3k2_TSSA",
-    "C2TSSA"
+    "C2TSSA",
+    "GDSAFusion"
 )
