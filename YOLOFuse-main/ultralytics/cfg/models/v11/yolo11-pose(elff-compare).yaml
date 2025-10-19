@@ -1,4 +1,4 @@
-# Parameters
+# Parameters1
 nc: 2 # number of classes
 ch: 6
 kpt_shape: [2, 3] # number of keypoints, number of dims (2 for x,y or 3 for x,y,visible)
