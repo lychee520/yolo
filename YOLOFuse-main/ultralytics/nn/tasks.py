@@ -79,7 +79,8 @@ from ultralytics.nn.modules import (
     C3k2_LFEM,
     C3k2_TSSA,
     C2TSSA,
-    GDSAFusion
+    GDSAFusion,
+    MFM
 )
 from ultralytics.nn.modules.layers.CGAFusion import CGAFusion
 from ultralytics.nn.modules.layers.BiFocus import C2f_BiFocus
@@ -1140,6 +1141,12 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             c2 = args[0]
             c1 = ch[f]
             args = [*args[1:]]
+        elif m is MFM:
+            if args[0] == 'head_channel':
+                args[0] = d[args[0]]
+            c1 = [ch[x] for x in f]
+            c2 = make_divisible(min(args[0], max_channels) * width, 8)
+            args = [c1, c2, *args[1:]]
         elif m in {GDSAFusion}:
             c1 = [ch[x] for x in f]
             c2 = sum(c1)
