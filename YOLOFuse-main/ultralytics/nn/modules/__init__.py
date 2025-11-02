@@ -70,7 +70,8 @@ from .block import (
     C3k2_RCB,
     C3k2_LFEM,
     C3k2_TSSA,
-    C2TSSA
+    C2TSSA,
+    MFM
 )
 from .conv import (
     CBAM,
@@ -191,5 +192,6 @@ __all__ = (
     "C3k2_LFEM",
     "C3k2_TSSA",
     "C2TSSA",
-    "GDSAFusion"
+    "GDSAFusion",
+    "MFM"
 )
