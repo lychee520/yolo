@@ -2135,7 +2135,7 @@ class Scharr(nn.Module):
         edges_y = self.conv_y(x)
         # 计算边缘和高斯分布强度（可以选择不同的方式进行融合，这里使用平方和开根号）
         scharr_edge = torch.sqrt(edges_x ** 2 + edges_y ** 2)
-        scharr_edge = self.act(self.norm(scharr_edge))
+        # scharr_edge = self.act(self.norm(scharr_edge))
         out = self.conv_extra(x + scharr_edge)
         # show_feature(out)
 
@@ -2244,56 +2244,6 @@ class DropPath(nn.Module):
 
     def forward(self, x):
         return drop_path(x, self.drop_prob, self.training)
-
-class LFE_Module(nn.Module):
-    def __init__(self,
-                 dim,
-                 stage=1,
-                 mlp_ratio=2,
-                 drop_path=0.1,
-                 ):
-        super().__init__()
-        self.stage = stage
-        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-
-        mlp_hidden_dim = int(dim * mlp_ratio)
-        mlp_layer: List[nn.Module] = [
-            Conv(dim, mlp_hidden_dim, 1),
-            nn.Conv2d(mlp_hidden_dim, dim, 1, bias=False)]
-
-        self.mlp = nn.Sequential(*mlp_layer)
-        self.LFEA = LFEA(dim)
-
-        if stage == 0:
-            self.Scharr_edge = Scharr(dim)
-        else:
-            self.gaussian = Gaussian(dim, 5, 1.0)
-        self.norm = nn.BatchNorm2d(dim)
-
-    def forward(self, x: Tensor) -> Tensor:
-        # show_feature(x)
-        if self.stage == 0:
-            att = self.Scharr_edge(x)
-        else:
-            att = self.gaussian(x)
-        x_att = self.LFEA(x, att)
-        x = x + self.norm(self.drop_path(self.mlp(x_att)))
-        return x
-
-
-class C3k_LFEM(C3k):
-    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5, k=3):
-        super().__init__(c1, c2, n, shortcut, g, e, k)
-        c_ = int(c2 * e)  # hidden channels
-        self.m = nn.Sequential(*(LFE_Module(c_) for _ in range(n)))
-
-
-class C3k2_LFEM(C3k2):
-    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
-        super().__init__(c1, c2, n, c3k, e, g, shortcut)
-        self.m = nn.ModuleList(
-            C3k_LFEM(self.c, self.c, n, shortcut, g) if c3k else LFE_Module(self.c) for _ in range(n))
-
 
 class DRFD_LoG(nn.Module):
     def __init__(self, dim):
