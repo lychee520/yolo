@@ -13,6 +13,7 @@ from .mona import Mona
 from typing import Optional, Callable, Union, List
 from torch import Tensor
 from .overlock import RepConvBlock
+from mmcv.cnn import build_norm_layer
 from .metaformer import *
 from einops import rearrange, reduce
 from .attention import *
@@ -2102,11 +2103,16 @@ class C3k2_RCB(C3k2):
 ######################################## LEGNet start ########################################
 
 class Conv_Extra(nn.Module):
-    def __init__(self, channel):
+    def __init__(self, channel, norm_layer, act_layer):
         super(Conv_Extra, self).__init__()
-        self.block = nn.Sequential(Conv(channel, 64, 1),
-                                   Conv(64, 64, 3),
-                                   Conv(64, channel, 1, act=False))
+        self.block = nn.Sequential(nn.Conv2d(channel, 64, 1),
+                                   build_norm_layer(norm_layer, 64)[1],
+                                   act_layer(),
+                                   nn.Conv2d(64, 64, 3, stride=1, padding=1, dilation=1, bias=False),
+                                   build_norm_layer(norm_layer, 64)[1],
+                                   act_layer(),
+                                   nn.Conv2d(64, channel, 1),
+                                   build_norm_layer(norm_layer, channel)[1])
 
     def forward(self, x):
         out = self.block(x)
@@ -2114,20 +2120,21 @@ class Conv_Extra(nn.Module):
 
 
 class Scharr(nn.Module):
-    def __init__(self, channel):
+    def __init__(self, channel, norm_layer, act_layer):
         super(Scharr, self).__init__()
         # 定义Scharr滤波器
-        scharr_x = torch.tensor([[-3., 0., 3.], [-10., 0., 10.], [-3., 0., 3.]], dtype=torch.float32).unsqueeze(
-            0).unsqueeze(0)
-        scharr_y = torch.tensor([[-3., -10., -3.], [0., 0., 0.], [3., 10., 3.]], dtype=torch.float32).unsqueeze(
-            0).unsqueeze(0)
+        scharr_x = torch.tensor([[-3., 0., 3.], [-10., 0., 10.], [-3., 0., 3.]], dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        scharr_y = torch.tensor([[-3., -10., -3.], [0., 0., 0.], [3., 10., 3.]], dtype=torch.float32).unsqueeze(0).unsqueeze(0)
         self.conv_x = nn.Conv2d(channel, channel, kernel_size=3, padding=1, groups=channel, bias=False)
         self.conv_y = nn.Conv2d(channel, channel, kernel_size=3, padding=1, groups=channel, bias=False)
         # 将Sobel滤波器分配给卷积层
         self.conv_x.weight.data = scharr_x.repeat(channel, 1, 1, 1)
         self.conv_y.weight.data = scharr_y.repeat(channel, 1, 1, 1)
-        self.norm = nn.BatchNorm2d(channel)
-        self.conv_extra = Conv_Extra(channel)
+        # self.norm = nn.InstanceNorm2d(channel, affine=True)  # 替代BatchNorm，避免批次统计量异常
+        self.norm = build_norm_layer(norm_layer, channel)[1]
+        self.act = act_layer()
+        self.conv_extra = Conv_Extra(channel, norm_layer, act_layer)
+        self.scale = nn.Parameter(torch.tensor(0.1))
 
     def forward(self, x):
         # show_feature(x)
@@ -2135,26 +2142,27 @@ class Scharr(nn.Module):
         edges_x = self.conv_x(x)
         edges_y = self.conv_y(x)
         # 计算边缘和高斯分布强度（可以选择不同的方式进行融合，这里使用平方和开根号）
-        scharr_edge = torch.sqrt(edges_x ** 2 + edges_y ** 2)
-        # scharr_edge = self.act(self.norm(scharr_edge))
-        out = self.conv_extra(x + scharr_edge)
+        scharr_edge = torch.sqrt(edges_x ** 2 + edges_y ** 2 + 1e-6)
+        scharr_edge = torch.clamp(scharr_edge, 0, 4)  # 限制范围
+        scharr_edge = self.act(self.norm(scharr_edge))
+        out = self.conv_extra(x + self.scale * scharr_edge)
         # show_feature(out)
 
         return out
 
 
 class Gaussian(nn.Module):
-    def __init__(self, dim, size, sigma, feature_extra=True):
+    def __init__(self, dim, size, sigma, norm_layer, act_layer, feature_extra=True):
         super().__init__()
         self.feature_extra = feature_extra
         gaussian = self.gaussian_kernel(size, sigma)
         gaussian = nn.Parameter(data=gaussian, requires_grad=False).clone()
         self.gaussian = nn.Conv2d(dim, dim, kernel_size=size, stride=1, padding=int(size // 2), groups=dim, bias=False)
         self.gaussian.weight.data = gaussian.repeat(dim, 1, 1, 1)
-        self.norm = nn.BatchNorm2d(dim)
-        self.act = nn.SiLU()
+        self.norm = build_norm_layer(norm_layer, dim)[1]
+        self.act = act_layer()
         if feature_extra == True:
-            self.conv_extra = Conv_Extra(dim)
+            self.conv_extra = Conv_Extra(dim, norm_layer, act_layer)
 
     def forward(self, x):
         edges_o = self.gaussian(x)
@@ -2173,18 +2181,20 @@ class Gaussian(nn.Module):
         ]).unsqueeze(0).unsqueeze(0)
         return kernel / kernel.sum()
 
-
 class LFEA(nn.Module):
-    def __init__(self, channel):
+    def __init__(self, channel, norm_layer, act_layer):
         super(LFEA, self).__init__()
         self.channel = channel
         t = int(abs((math.log(channel, 2) + 1) / 2))
         k = t if t % 2 else t + 1
-        self.conv2d = self.block = Conv(channel, channel, 3)
+        self.conv2d = self.block = nn.Sequential(
+            nn.Conv2d(channel, channel, 3, stride=1, padding=1, dilation=1, bias=False),
+            build_norm_layer(norm_layer, channel)[1],
+            act_layer())
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.conv1d = nn.Conv1d(1, 1, kernel_size=k, padding=(k - 1) // 2, bias=False)
         self.sigmoid = nn.Sigmoid()
-        self.norm = nn.BatchNorm2d(channel)
+        self.norm = build_norm_layer(norm_layer, channel)[1]
 
     def forward(self, c, att):
         att = c * att + c
@@ -2195,6 +2205,7 @@ class LFEA(nn.Module):
         x = self.norm(c + att * wei)
 
         return x
+
 
 
 def drop_path(x, drop_prob: float = 0., training: bool = False):
@@ -2334,12 +2345,66 @@ class LoGStem(nn.Module):
 
         return x  # x = [B, C, H/4, W/4]
 
+
+# -------------------------- 关键修改：多尺度纹理增强模块（MSTE） --------------------------
+class MSTE(nn.Module):
+    """多尺度纹理增强模块：适配遥感影像的细微纹理和大尺度结构特征"""
+
+    def __init__(self, channel, norm_layer, act_layer):
+        super(MSTE, self).__init__()
+        self.channel = channel
+
+        # 1. 多尺度卷积核：小核（3x3）捕捉细节纹理，大核（5x5）捕捉结构特征
+        self.conv_small = nn.Conv2d(channel, channel, kernel_size=3, padding=1, groups=channel, bias=False)  # 3x3小核
+        self.conv_large = nn.Conv2d(channel, channel, kernel_size=5, padding=2, groups=channel, bias=False)  # 5x5大核
+        # 初始化卷积核为小权重（避免初始特征爆炸）
+        nn.init.normal_(self.conv_small.weight, mean=0.0, std=0.01)
+        nn.init.normal_(self.conv_large.weight, mean=0.0, std=0.01)
+
+        # 2. 通道注意力：动态融合多尺度特征（突出遥感影像中目标相关的纹理通道）
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.att_conv = nn.Sequential(
+            nn.Conv2d(channel * 2, channel // 4, kernel_size=1, bias=False),
+            act_layer(),
+            nn.Conv2d(channel // 4, channel * 2, kernel_size=1, bias=False),
+            nn.Sigmoid()
+        )
+
+        # 3. 数值稳定层：InstanceNorm避免批次统计异常，缩放因子控制特征范围
+        self.norm = nn.InstanceNorm2d(channel, affine=True)
+        self.act = act_layer()
+        self.scale = nn.Parameter(torch.tensor(0.1), requires_grad=True)  # 初始缩放因子0.1，避免特征过强
+        self.conv_extra = Conv_Extra(channel, norm_layer, act_layer)
+
+    def forward(self, x):
+        # 多尺度特征提取
+        feat_small = self.conv_small(x)  # 3x3提取细节（如道路边缘、植被纹理）
+        feat_large = self.conv_large(x)  # 5x5提取结构（如建筑轮廓、农田地块）
+
+        # 通道注意力融合
+        feat_cat = torch.cat([feat_small, feat_large], dim=1)  # 拼接多尺度特征
+        att = self.avg_pool(feat_cat)
+        att = self.att_conv(att)
+        feat_fused = feat_cat * att  # 动态加权融合
+
+        # 分离通道，恢复原通道数
+        feat_small_fused = feat_fused[:, :self.channel, :, :]
+        feat_large_fused = feat_fused[:, self.channel:, :, :]
+        mste_feat = (feat_small_fused + feat_large_fused) * self.scale  # 缩放控制强度
+
+        # 数值稳定处理
+        mste_feat = self.act(self.norm(mste_feat))
+        out = self.conv_extra(x + mste_feat)  # 与原特征融合，避免特征偏移
+        return out
+
 class LFE_Module(nn.Module):
     def __init__(self,
                  dim,
-                 stage=1,
-                 mlp_ratio=2,
-                 drop_path=0.1,
+                 stage = 1,
+                 mlp_ratio = 2,
+                 drop_path = 0.1,
+                 act_layer = nn.ReLU,
+                 norm_layer = dict(type='BN', requires_grad=True)
                  ):
         super().__init__()
         self.stage = stage
@@ -2347,17 +2412,18 @@ class LFE_Module(nn.Module):
 
         mlp_hidden_dim = int(dim * mlp_ratio)
         mlp_layer: List[nn.Module] = [
-            Conv(dim, mlp_hidden_dim, 1),
+            nn.Conv2d(dim, mlp_hidden_dim, 1, bias=False),
+            build_norm_layer(norm_layer, mlp_hidden_dim)[1],
+            act_layer(),
             nn.Conv2d(mlp_hidden_dim, dim, 1, bias=False)]
 
         self.mlp = nn.Sequential(*mlp_layer)
-        self.LFEA = LFEA(dim)
-
+        self.LFEA = LFEA(dim, norm_layer, act_layer)
         if stage == 0:
-            self.Scharr_edge = Scharr(dim)
+            self.Scharr_edge = Scharr(dim, norm_layer, act_layer)
         else:
-            self.gaussian = Gaussian(dim, 5, 1.0)
-        self.norm = nn.BatchNorm2d(dim)
+            self.gaussian = Gaussian(dim, 5, 1.0, norm_layer, act_layer)
+        self.norm = build_norm_layer(norm_layer, dim)[1]
 
     def forward(self, x: Tensor) -> Tensor:
         # show_feature(x)
@@ -2373,13 +2439,13 @@ class C3k_LFEM(C3k):
     def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5, k=3):
         super().__init__(c1, c2, n, shortcut, g, e, k)
         c_ = int(c2 * e)  # hidden channels
-        self.m = nn.Sequential(*(LFE_Module(c_) for _ in range(n)))
+        self.m = nn.Sequential(*(LFE_Module(c_, 1) for _ in range(n)))
 
 class C3k2_LFEM(C3k2):
     def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
         super().__init__(c1, c2, n, c3k, e, g, shortcut)
         self.m = nn.ModuleList(
-            C3k_LFEM(self.c, self.c, n, shortcut, g) if c3k else LFE_Module(self.c) for _ in range(n))
+            C3k_LFEM(self.c, self.c, n, shortcut, g) if c3k else LFE_Module(self.c, 0) for _ in range(n))
 
 
 ######################################## LEGNet end ########################################
