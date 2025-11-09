@@ -2207,6 +2207,75 @@ class LFEA(nn.Module):
         return x
 
 
+class AIF(nn.Module):
+    """
+    Adaptive Interpolation Fuser (AIF) Module
+    (融合了方案二的插值逻辑 + SCGA 的增强组件)
+    """
+
+    def __init__(self, channel):
+        super(AIF, self).__init__()
+        self.channel = channel
+        # --- 1. 门控生成路径 (Gate Generation Path) ---
+        # 门控由 concat(c, att) 共同决定
+        # 输入: 2*channel, 输出: 'channel' (与c和att的通道数相同)
+        self.conv_gate = nn.Sequential(
+            Conv(channel * 2, channel, 1),
+            nn.Sigmoid()
+        )
+        # --- 2. 内容精炼路径 (Content Refinement Path) ---
+        # (即 SCGA 中的 'content_refined' 逻辑)
+
+        # 2a. 多尺度空间提取 (用于 F_spatial)
+        self.conv1x1 = Conv(channel, channel, 1)
+        self.conv3x3 = Conv(channel, channel, 3, p=1)
+        self.conv3_dil = Conv(channel, channel, 3, p=2, d=2)  # 3x3 空洞卷积
+        self.fuse = Conv(channel * 3, channel, 1)  # 融合多尺度特征
+        # 2b. 双池化通道注意力 (用于 wei_final)
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)  # 保留小目标峰值
+
+        t = int(abs((math.log(channel, 2) + 1) / 2))
+        k = t if t % 2 else t + 1
+        self.conv1d = nn.Conv1d(1, 1, kernel_size=k, padding=(k - 1) // 2, bias=False)
+        self.sigmoid_channel = nn.Sigmoid()
+        # --- 3. 最终归一化 ---
+        self.norm = nn.BatchNorm2d(channel)
+    def forward(self, c, att):
+        # c 是 'x' (原始特征)
+        # att 是 'att' (原始先验, e.g., Scharr/Gaussian的输出)
+        # 1. (新) 生成“智能门控”
+        # 门控 G 看了 c 和 att 两者，所以它“知道”该信任谁
+        # (B, C, H, W) 和 (B, C, H, W) -> (B, 2C, H, W)
+        gate_input = torch.cat((c, att), dim=1)
+        # (B, 2C, H, W) -> (B, C, H, W)
+        gate = self.conv_gate(gate_input) # G 的值域在 [0, 1]
+        # 2. (新) 生成“精炼内容” (Content_Refined)
+        # (这部分和 SCGA 方案一完全一样)
+        # 2a. 多尺度空间处理 'att'
+        f_1x1 = self.conv1x1(att)
+        f_3x3 = self.conv3x3(att)
+        f_dil = self.conv3_dil(att)
+        f_spatial = self.fuse(torch.cat((f_1x1, f_3x3, f_dil), dim=1))
+
+        # 2b. 双池化通道注意力
+        wei_avg = self.avg_pool(f_spatial)
+        wei_max = self.max_pool(f_spatial)
+        wei = wei_avg + wei_max
+        wei_squeezed = wei.squeeze(-1).transpose(-1, -2)
+        wei_gated = self.conv1d(wei_squeezed)
+        wei_final = self.sigmoid_channel(wei_gated.transpose(-1, -2).unsqueeze(-1))
+
+        # 2c. 得到最终的“增强内容”
+        content_refined = f_spatial * wei_final
+        # 3. (新) 自适应插值 (Adaptive Interpolation)
+        # (1 - G) * c     +    G * content_refined
+        # (原始特征通路)     (增强特征通路)
+        out = (1 - gate) * c + gate * content_refined
+        # 4. 最终归一化
+        x = self.norm(out)
+        return x
+
 
 def drop_path(x, drop_prob: float = 0., training: bool = False):
     """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
@@ -2418,7 +2487,8 @@ class LFE_Module(nn.Module):
             nn.Conv2d(mlp_hidden_dim, dim, 1, bias=False)]
 
         self.mlp = nn.Sequential(*mlp_layer)
-        self.LFEA = LFEA(dim, norm_layer, act_layer)
+        # self.LFEA = LFEA(dim, norm_layer, act_layer)
+        self.AIF = AIF(dim)
         if stage == 0:
             self.Scharr_edge = Scharr(dim, norm_layer, act_layer)
         else:
@@ -2431,7 +2501,8 @@ class LFE_Module(nn.Module):
             att = self.Scharr_edge(x)
         else:
             att = self.gaussian(x)
-        x_att = self.LFEA(x, att)
+        # x_att = self.LFEA(x, att)
+        x_att = self.AIF(x, att)
         x = x + self.norm(self.drop_path(self.mlp(x_att)))
         return x
 
