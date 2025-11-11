@@ -71,12 +71,15 @@ from .block import (
     C3k2_LFEM,
     C3k2_TSSA,
     C2TSSA,
-    MFM
+    MFM,
+    DWDownSampler,
+    NearestZeroPad
 )
 from .conv import (
     CBAM,
     ChannelAttention,
     Concat,
+    ChannelWiseConcat,
     Conv,
     Conv2,
     DSConv,
@@ -193,5 +196,8 @@ __all__ = (
     "C3k2_TSSA",
     "C2TSSA",
     "GDSAFusion",
-    "MFM"
+    "MFM",
+    "DWDownSampler",
+    "NearestZeroPad",
+    "ChannelWiseConcat"
 )
