@@ -40,6 +40,7 @@ from ultralytics.nn.modules import (
     CBLinear,
     Classify,
     Concat,
+    ChannelWiseConcat,
     Conv,
     Conv2,
     DSConv,
@@ -80,7 +81,9 @@ from ultralytics.nn.modules import (
     C3k2_TSSA,
     C2TSSA,
     GDSAFusion,
-    MFM
+    MFM,
+    DWDownSampler,
+    NearestZeroPad
 )
 from ultralytics.nn.modules.layers.CGAFusion import CGAFusion
 from ultralytics.nn.modules.layers.BiFocus import C2f_BiFocus
@@ -1029,7 +1032,8 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             C3k2_RCB,
             C3k2_LFEM,
             C3k2_TSSA,
-            C2TSSA
+            C2TSSA,
+            NearestZeroPad
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1111,7 +1115,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             c2 = sum([ch[x] for x in f])//2
         elif m is nn.BatchNorm2d:
             args = [ch[f]]
-        elif m in frozenset({Concat, ModalConcat}):
+        elif m in frozenset({Concat, ModalConcat, ChannelWiseConcat}):
             c2 = sum(ch[x] for x in f)
         elif m in frozenset({Detect, WorldDetect, Segment, Pose, OBB, ImagePoolingAttn, v10Detect}):
             args.append([ch[x] for x in f])
@@ -1174,6 +1178,9 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
                 c2 =c1
         elif m is FullPAD_Tunnel:
             c2 = ch[f[0]]
+        elif m is NearestZeroPad:
+            c1 = ch[f]  # 输入通道
+            c2 = args[0]  # yaml 里写的 1024
         else:
             c2 = ch[f]
 

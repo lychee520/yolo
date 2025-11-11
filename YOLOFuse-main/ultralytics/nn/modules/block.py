@@ -72,7 +72,9 @@ __all__ = (
     "C3k2_LFEM",
     "C3k2_TSSA",
     "C2TSSA",
-    "MFM"
+    "MFM",
+    "DWDownSampler",
+    "NearestZeroPad"
 )
 
 
@@ -2656,3 +2658,41 @@ class MFM(nn.Module):
 
         out = torch.sum(in_feats*attn, dim=1)
         return out
+
+
+class DWDownSampler(nn.Module):
+    """深度可分离卷积下采样，通道数全程 64，最后 1×1 升 1024"""
+    def __init__(self, in_ch, out_ch, times=3):
+        super().__init__()
+        layers = []
+        for _ in range(times):
+            layers.append(Conv(in_ch, in_ch, k=3, s=2, p=1, g=in_ch))  # DW
+            layers.append(Conv(in_ch, 64, k=1))                        # PW
+            in_ch = 64
+        layers.append(Conv(64, out_ch, k=1))  # 最后一次升维
+        self.m = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.m(x)
+
+class NearestZeroPad(nn.Module):
+    """
+    零卷积参数，仅 896 个可学习标量。
+    前向：最近邻 8× 下采样 → 零填充到 1024 → 用可学习权重对空通道做缩放
+    """
+    def __init__(self, in_ch=128, out_ch=1024):
+        super().__init__()
+        self.in_ch  = in_ch
+        self.out_ch = out_ch
+        # 可学习缩放：仅对“补零通道”生效，原通道固定 1
+        self.zeros_scale = nn.Parameter(torch.ones(1, out_ch - in_ch, 1, 1))
+
+    def forward(self, x):
+        # 1. 最近邻下采样 8×  (1/4 → 1/32)
+        x = F.interpolate(x, scale_factor=0.125, mode='nearest')      # [B,128,H/8,W/8]
+        # 2. 零填充到 1024
+        x = F.pad(x, (0,0,0,0,0,self.out_ch-self.in_ch))              # [B,1024,H/8,W/8]
+        # 3. 对后 896 维乘以可学习系数
+        orig, zero_part = torch.split(x, [self.in_ch, self.out_ch-self.in_ch], dim=1)
+        zero_part = zero_part * self.zeros_scale                      # 仅空通道可学习
+        return torch.cat([orig, zero_part], 1)

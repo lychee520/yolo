@@ -20,6 +20,7 @@ __all__ = (
     "SpatialAttention",
     "CBAM",
     "Concat",
+    "ChannelWiseConcat",
     "RepConv",
     "Index",
     "DSConv"
@@ -332,6 +333,32 @@ class Concat(nn.Module):
     def forward(self, x):
         """Forward pass for the YOLOv8 mask Proto module."""
         return torch.cat(x, self.d)
+
+class ChannelWiseConcat(nn.Module):
+    """
+    通道-交错式 Concat
+    输入：List[Tensor(B,C,H,W)]  所有张量 C 相同
+    输出：Tensor(B, C*N, H, W)   与 torch.cat(x, dim=1) 形状完全一致
+    但通道顺序是：
+        [ch0_branch0, ch0_branch1, ..., ch0_branchN-1,
+         ch1_branch0, ch1_branch1, ..., ch1_branchN-1,
+         ...
+         chC-1_branch0, ..., chC-1_branchN-1]
+    """
+    def __init__(self, dimension=1):
+        super().__init__()
+        self.d = dimension          # 仅保留接口，实际固定为 1
+
+    def forward(self, x):
+        # x: List[Tensor(B,C,H,W)]
+        c = x[0].shape[1]
+        # 先把每个张量拆成单通道列表
+        slices = [torch.chunk(t, c, dim=1) for t in x]  # List[List[Tensor(B,1,H,W)]]
+        # 逐通道 cat
+        interleaved = []
+        for i in range(c):
+            interleaved.append(torch.cat([sl[i] for sl in slices], dim=1))  # (B,N,H,W)
+        return torch.cat(interleaved, dim=1)   # (B,C*N,H,W)
 
 
 class Index(nn.Module):
