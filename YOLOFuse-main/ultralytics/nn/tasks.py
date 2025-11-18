@@ -887,7 +887,7 @@ def torch_safe_load(weight, safe_only=False):
             f"run a command with an official Ultralytics model, i.e. 'yolo predict model=yolo11n.pt'"
         )
         check_requirements(e.name)  # install missing module
-        ckpt = torch.load(file, map_location="cpu")
+        ckpt = torch.load(file, map_location="cpu", weights_only=True)
 
     if not isinstance(ckpt, dict):
         # File is likely a YOLO instance saved with i.e. torch.save(model, "saved_model.pt")
@@ -1033,7 +1033,8 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             C3k2_LFEM,
             C3k2_TSSA,
             C2TSSA,
-            NearestZeroPad
+            NearestZeroPad,
+            DWDownSampler
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1178,7 +1179,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
                 c2 =c1
         elif m is FullPAD_Tunnel:
             c2 = ch[f[0]]
-        elif m is NearestZeroPad:
+        elif m in {NearestZeroPad, DWDownSampler}:
             c1 = ch[f]  # 输入通道
             c2 = args[0]  # yaml 里写的 1024
         else:
