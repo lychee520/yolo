@@ -2,7 +2,7 @@
 ch: 6
 nc: 2 # number of classes
 kpt_shape: [2, 3] # number of keypoints, number of dims (2 for x,y or 3 for x,y,visible)
-scales: # model compound scaling constants, i.e. ljy'model=yolov11n.yaml' will call yolov8.yaml with scale 'n'
+scales: # model compound scaling constants, i.e. 'model=yolov11n.yaml' will call yolov8.yaml with scale 'n'
   # [depth, width, max_channels]
   n: [0.50, 0.25, 1024] # summary: 319 layers, 2624080 parameters, 2624064 gradients, 6.6 GFLOPs
   s: [0.50, 0.50, 1024] # summary: 319 layers, 9458752 parameters, 9458736 gradients, 21.7 GFLOPs
@@ -50,7 +50,7 @@ backbone:
 # 原21层(S1 Conv)和原23层(S1 C3k2)已被删除。
 
 # 原22层现在是第 21 层
-- [-1, 2, C3k2_LFEM, [1024, False, 0.25]]  # 21 <-- "深层S2专家"特征 (原22层) b
+- [-1, 2, C3k2, [1024, True]]  # 21 <-- "深层S2专家"特征 (原22层) b
 
 # 新分支开始
 - [5, 1, NearestZeroPad, [1024]]  # 22 (P2->P3)
